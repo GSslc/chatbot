@@ -1,56 +1,170 @@
 import streamlit as st
-from openai import OpenAI
+import google.generativeai as genai
+import google.ai.generativelanguage as glm
+import uuid
 
-# Show title and description.
-st.title("💬 Chatbot")
-st.write(
-    "This is a simple chatbot that uses OpenAI's GPT-3.5 model to generate responses. "
-    "To use this app, you need to provide an OpenAI API key, which you can get [here](https://platform.openai.com/account/api-keys). "
-    "You can also learn how to build this app step by step by [following our tutorial](https://docs.streamlit.io/develop/tutorials/llms/build-conversational-apps)."
-)
+st.set_page_config(page_title="ChatAI", page_icon="https://emojix.s3.ap-northeast-1.amazonaws.com/g3/svg/1f4ac.svg")
 
-# Ask user for their OpenAI API key via `st.text_input`.
-# Alternatively, you can store the API key in `./.streamlit/secrets.toml` and access it
-# via `st.secrets`, see https://docs.streamlit.io/develop/concepts/connections/secrets-management
-openai_api_key = st.text_input("OpenAI API Key", type="password")
-if not openai_api_key:
-    st.info("Please add your OpenAI API key to continue.", icon="🗝️")
+# サイドバーにAPIキーの入力フィールドを追加
+api_key = st.sidebar.text_input("APIキーを入力してください", type="password")
+
+# セッション状態の初期化
+if "api_key" not in st.session_state:
+    st.session_state["api_key"] = None
+
+# APIキーが入力された場合、それをセッションに保存し、GeminiのAPIを設定
+if api_key:
+    st.session_state["api_key"] = api_key
+    genai.configure(api_key=st.session_state["api_key"])
+
+# APIキーが入力されていない場合は、警告を表示し、以降の機能は無効化
+if st.session_state["api_key"] is None:
+    st.warning("APIキーを入力すると、チャットを開始できます。")
 else:
+    # セッション状態の初期化
+    if "chat_sessions" not in st.session_state:
+        st.session_state["chat_sessions"] = {}
+        st.session_state["current_chat_id"] = None
 
-    # Create an OpenAI client.
-    client = OpenAI(api_key=openai_api_key)
+    # ユーザーとアシスタントのアイコンを設定
+    user_icon_url = "https://emojix.s3.ap-northeast-1.amazonaws.com/g3/svg/1f60a.svg"  # ユーザーアイコンのURLを指定
+    assistant_icon_url = "https://emojix.s3.ap-northeast-1.amazonaws.com/g3/svg/1f916.svg"  # アシスタントアイコンのURLを指定
 
-    # Create a session state variable to store the chat messages. This ensures that the
-    # messages persist across reruns.
-    if "messages" not in st.session_state:
-        st.session_state.messages = []
+    # 新しいチャットセッションを作成する関数
+    def create_new_chat():
+        chat_id = str(uuid.uuid4())
+        model = genai.GenerativeModel('gemini-pro')
+        st.session_state["chat_sessions"][chat_id] = {
+            "chat_session": model.start_chat(history=[
+                glm.Content(role="user", parts=[glm.Part(text="あなたは優秀なAIアシスタントです。できるだけわかりやすく説明してください。またわからないことはわからないと言ってください。")]),
+                glm.Content(role="model", parts=[glm.Part(text="わかりました。")])
+            ]),
+            "chat_history": []
+        }
+        st.session_state["current_chat_id"] = chat_id
 
-    # Display the existing chat messages via `st.chat_message`.
-    for message in st.session_state.messages:
-        with st.chat_message(message["role"]):
-            st.markdown(message["content"])
+    # ホームに戻るための関数
+    def return_to_home():
+        st.session_state["current_chat_id"] = None
 
-    # Create a chat input field to allow the user to enter a message. This will display
-    # automatically at the bottom of the page.
-    if prompt := st.chat_input("What is up?"):
+    # サイドバーに「ホームに戻る」ボタンを追加
+    if st.sidebar.button("ホーム"):
+        return_to_home()
 
-        # Store and display the current prompt.
-        st.session_state.messages.append({"role": "user", "content": prompt})
-        with st.chat_message("user"):
-            st.markdown(prompt)
+    # サイドバーに「＋」ボタンを追加
+    if st.sidebar.button("＋"):
+        create_new_chat()
 
-        # Generate a response using the OpenAI API.
-        stream = client.chat.completions.create(
-            model="gpt-3.5-turbo",
-            messages=[
-                {"role": m["role"], "content": m["content"]}
-                for m in st.session_state.messages
-            ],
-            stream=True,
-        )
+    # 既存のチャットセッションをサイドバーにボタンとして表示
+    if st.session_state["chat_sessions"]:
+        st.sidebar.write("チャット一覧:")
+        for chat_id in st.session_state["chat_sessions"]:
+            if st.sidebar.button(f"チャット {chat_id[:8]}"):
+                st.session_state["current_chat_id"] = chat_id
+    else:
+        st.sidebar.write("チャットがありません")
 
-        # Stream the response to the chat using `st.write_stream`, then store it in 
-        # session state.
-        with st.chat_message("assistant"):
-            response = st.write_stream(stream)
-        st.session_state.messages.append({"role": "assistant", "content": response})
+    # カスタムCSSスタイルの定義
+    st.markdown("""
+        <style>
+        .user-message {
+            display: flex;
+            justify-content: flex-end;
+            margin-bottom: 10px;
+        }
+        .assistant-message {
+            display: flex;
+            justify-content: flex-start;
+            margin-bottom: 10px;
+        }
+        .message {
+            max-width: 80%;
+            padding: 10px;
+            border-radius: 10px;
+            position: relative;
+            margin: 5px;
+            font-size: 16px;
+        }
+        .user-bubble {
+            background-color: #dcf8c6;
+            border-radius: 10px 0px 10px 10px;
+        }
+        .assistant-bubble {
+            background-color: #f1f1f1;
+            border-radius: 0px 10px 10px 10px;
+        }
+        .avatar {
+            width: 30px;
+            height: 30px;
+            border-radius: 50%;
+            margin: 5px;
+        }
+        .user-avatar {
+            margin-left: 5px;
+        }
+        .assistant-avatar {
+            margin-right: 5px;
+        }
+        </style>
+        """, unsafe_allow_html=True)
+
+    # 現在のチャットセッションの表示またはホームページの表示
+    if st.session_state["current_chat_id"]:
+        current_chat = st.session_state["chat_sessions"][st.session_state["current_chat_id"]]
+        chat_session = current_chat["chat_session"]
+        chat_history = current_chat["chat_history"]
+
+        # チャット履歴を全て表示
+        for message in chat_history:
+            if message["role"] == "user":
+                # ユーザーメッセージを右側に表示（アイコンは右）
+                st.markdown(f"""
+                <div class="user-message">
+                    <div class="message user-bubble">
+                        {message["content"]}
+                    </div>
+                    <img src="{user_icon_url}" class="avatar user-avatar" alt="User Icon">
+                </div>
+                """, unsafe_allow_html=True)
+            else:
+                # アシスタントメッセージを左側に表示（アイコンは左）
+                st.markdown(f"""
+                <div class="assistant-message">
+                    <img src="{assistant_icon_url}" class="avatar assistant-avatar" alt="Assistant Icon">
+                    <div class="message assistant-bubble">
+                        {message["content"]}
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
+
+        # ユーザー入力送信後処理
+        if prompt := st.chat_input("ここに入力してください"):
+            # ユーザの入力を表示する
+            chat_history.append({"role": "user", "content": prompt})
+            st.markdown(f"""
+            <div class="user-message">
+                <div class="message user-bubble">
+                    {prompt}
+                </div>
+                <img src="{user_icon_url}" class="avatar user-avatar" alt="User Icon">
+            </div>
+            """, unsafe_allow_html=True)
+
+            # Genimi Proにメッセージ送信
+            response = chat_session.send_message(prompt)
+
+            # アシスタントのレスポンスを表示
+            chat_history.append({"role": "assistant", "content": response.text})
+            st.markdown(f"""
+            <div class="assistant-message">
+                <img src="{assistant_icon_url}" class="avatar assistant-avatar" alt="Assistant Icon">
+                <div class="message assistant-bubble">
+                    {response.text}
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+    else:
+        # ホームページを表示
+        st.title("ChatAIへようこそ")
+        st.write("ここでは、Google Gemini APIを使用してAIアシスタントとチャットを行うことができます。")
+        st.write("サイドバーから新しいチャットセッションを作成し、会話を開
